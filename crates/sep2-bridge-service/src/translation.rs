@@ -307,6 +307,52 @@ impl TryFrom<ControlAttributes> for ModbusParameters {
         };
 
         Ok(ModbusParameters {
+            // AS5438 - Table F.6 to E.6
+            der_volt_watt: attrs
+                .inner
+                .der_control_base
+                .op_mod_volt_watt
+                .clone()
+                .and_then(get_curve_data)
+                .try_convert()
+                .map_err(|err| err.name("der_volt_watt"))?,
+            der_volt_watt_tms: attrs
+                .inner
+                .der_control_base
+                .op_mod_volt_watt
+                .and_then(get_curve_data)
+                .and_then(|curve_data| curve_data.open_loop_tms.convert()),
+
+            // AS5438 - Table F.7 to E.7
+            der_trip_lv_must: attrs
+                .inner
+                .der_control_base
+                .op_mod_lvrt_must_trip
+                .and_then(get_curve_data)
+                .try_convert()
+                .map_err(|err| err.name("der_trip_lv_must"))?,
+            der_trip_lv_mom_cess: attrs
+                .inner
+                .der_control_base
+                .op_mod_lvrt_momentary_cessation
+                .and_then(get_curve_data)
+                .try_convert()
+                .map_err(|err| err.name("der_trip_lv_mom_cess"))?,
+            der_trip_hv_must: attrs
+                .inner
+                .der_control_base
+                .op_mod_hvrt_must_trip
+                .and_then(get_curve_data)
+                .try_convert()
+                .map_err(|err| err.name("der_trip_hv_must"))?,
+            der_trip_hv_mom_cess: attrs
+                .inner
+                .der_control_base
+                .op_mod_hvrt_momentary_cessation
+                .and_then(get_curve_data)
+                .try_convert()
+                .map_err(|err| err.name("der_trip_hv_mom_cess"))?,
+
             // AS5438 - Table F.8 to E.8
             der_trip_lf: attrs
                 .inner

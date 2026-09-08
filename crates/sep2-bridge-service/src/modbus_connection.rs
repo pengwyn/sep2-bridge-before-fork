@@ -10,6 +10,9 @@ use sunspec::{
         model702::{CtrlModes, Model702},
         model703::{self, Model703},
         model704::{self, Model704},
+        model706::{self, Model706},
+        model707::{self, Model707},
+        model708::{self, Model708},
         model709::{self, Model709},
         model710::{self, Model710},
         model711::{self, Model711},
@@ -50,6 +53,16 @@ pub enum Command {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Parameters {
+    // AS5438 - Table E.6, Section E.4.4
+    pub der_volt_watt: Option<Curve<u16, i16>>,
+    pub der_volt_watt_tms: Option<u32>,
+
+    // AS5438 - Table E.7, Section E.4.5
+    pub der_trip_lv_must: Option<Curve<u16, u32>>,
+    pub der_trip_lv_mom_cess: Option<Curve<u16, u32>>,
+    pub der_trip_hv_must: Option<Curve<u16, u32>>,
+    pub der_trip_hv_mom_cess: Option<Curve<u16, u32>>,
+
     // AS5438 - Table E.8, Section E.4.6
     pub der_trip_lf: Option<Curve<u32, u32>>,
     pub der_trip_hf: Option<Curve<u32, u32>>,
@@ -544,6 +557,9 @@ async fn send_new_parameters(
 ) -> Result<()> {
     send_model703_parameters(device, parameters).await?;
     send_model704_parameters(device, parameters).await?;
+    send_model706_parameters(device, parameters).await?;
+    send_model707_parameters(device, parameters).await?;
+    send_model708_parameters(device, parameters).await?;
     send_model709_parameters(device, parameters).await?;
     send_model710_parameters(device, parameters).await?;
     send_model711_parameters(device, parameters).await?;
@@ -688,6 +704,104 @@ async fn send_model704_parameters(
     Ok(())
 }
 
+async fn send_model706_parameters(
+    device: &AsyncDevice<TokioModbusContext>,
+    parameters: &Parameters,
+) -> Result<()> {
+    // AS5438 - Table E.6, Section E.4.4
+    if !device.models.supported_model_ids().contains(&706) {
+        return Ok(());
+    }
+
+    let wrote_curve = if let Some(der_volt_watt) = parameters.der_volt_watt.as_ref() {
+        Model706::write_curve(device, der_volt_watt).await?;
+        if let Some(tms) = parameters.der_volt_watt_tms {
+            // Unfortunate bit of duplication
+            let n_pt = device.read_point(Model706::N_PT).await.map_err(comm_err)?;
+            let offset = Model706::addr(&device.models).addr + Model706::curve_offset(2, n_pt);
+            write_offset_point(device, offset, model706::Crv::RSP_TMS, Some(tms))
+                .await
+                .map_err(comm_err)?;
+        }
+        true
+    } else {
+        false
+    };
+
+    device
+        .write_point(
+            Model706::ENA,
+            match wrote_curve {
+                false => model706::Ena::Disabled,
+                true => model706::Ena::Enabled,
+            },
+        )
+        .await
+        .map_err(comm_err)?;
+
+    Ok(())
+}
+
+async fn send_model707_parameters(
+    device: &AsyncDevice<TokioModbusContext>,
+    parameters: &Parameters,
+) -> Result<()> {
+    // AS5438 - Table E.7, Section E.4.5
+    if !device.models.supported_model_ids().contains(&707) {
+        return Ok(());
+    }
+
+    let wrote_curve = Model707::write_curves(
+        device,
+        parameters.der_trip_lv_must.as_ref(),
+        None,
+        parameters.der_trip_lv_mom_cess.as_ref(),
+    )
+    .await?;
+    device
+        .write_point(
+            Model707::ENA,
+            match wrote_curve {
+                false => model707::Ena::Disabled,
+                true => model707::Ena::Enabled,
+            },
+        )
+        .await
+        .map_err(comm_err)?;
+
+    Ok(())
+}
+
+async fn send_model708_parameters(
+    device: &AsyncDevice<TokioModbusContext>,
+    parameters: &Parameters,
+) -> Result<()> {
+    // AS5438 - Table E.7, Section E.4.5
+    if !device.models.supported_model_ids().contains(&708) {
+        return Ok(());
+    }
+
+    let wrote_curve = Model708::write_curves(
+        device,
+        parameters.der_trip_hv_must.as_ref(),
+        None,
+        parameters.der_trip_hv_mom_cess.as_ref(),
+    )
+    .await?;
+    device
+        .write_point(
+            Model708::ENA,
+            match wrote_curve {
+                false => model708::Ena::Disabled,
+                true => model708::Ena::Enabled,
+            },
+        )
+        .await
+        .map_err(comm_err)?;
+
+    Ok(())
+}
+
 async fn send_model709_parameters(
     device: &AsyncDevice<TokioModbusContext>,
     parameters: &Parameters,
@@ -738,6 +852,7 @@ async fn send_model710_parameters(
 
     Ok(())
 }
+
 async fn send_model711_parameters(
     device: &AsyncDevice<TokioModbusContext>,
     parameters: &Parameters,
@@ -998,6 +1113,40 @@ enum TripCurve {
     MomCess,
 }
 
+impl TripCurveModel<u16, u32> for Model707 {
+    type GCrv = model707::Crv;
+    type GMustTrip = model707::MustTrip;
+    type GMayTrip = model707::MayTrip;
+    type GMomCess = model707::MomCess;
+    type GPt = model707::Pt;
+
+    const ADPT_CURV_REQ: Point<Self, u16> = Self::ADPT_CRV_REQ;
+    const N_CRV_SET: Point<Self, u16> = Self::N_CRV_SET;
+    const N_PT: Point<Self, u16> = Self::N_PT;
+    const X_SF: Point<Self, i16> = Self::V_SF;
+    const Y_SF: Point<Self, i16> = Self::TMS_SF;
+    const CRV_ACT_PT: Point<Self::GMustTrip, Option<u16>> = model707::MustTrip::ACT_PT;
+    const X_PT: Point<Self::GPt, Option<u16>> = model707::Pt::V;
+    const Y_PT: Point<Self::GPt, Option<u32>> = model707::Pt::TMS;
+}
+
+impl TripCurveModel<u16, u32> for Model708 {
+    type GCrv = model708::Crv;
+    type GMustTrip = model708::MustTrip;
+    type GMayTrip = model708::MayTrip;
+    type GMomCess = model708::MomCess;
+    type GPt = model708::Pt;
+
+    const ADPT_CURV_REQ: Point<Self, u16> = Self::ADPT_CRV_REQ;
+    const N_CRV_SET: Point<Self, u16> = Self::N_CRV_SET;
+    const N_PT: Point<Self, u16> = Self::N_PT;
+    const X_SF: Point<Self, i16> = Self::V_SF;
+    const Y_SF: Point<Self, i16> = Self::TMS_SF;
+    const CRV_ACT_PT: Point<Self::GMustTrip, Option<u16>> = model708::MustTrip::ACT_PT;
+    const X_PT: Point<Self::GPt, Option<u16>> = model708::Pt::V;
+    const Y_PT: Point<Self::GPt, Option<u32>> = model708::Pt::TMS;
+}
+
 impl TripCurveModel<u32, u32> for Model709 {
     type GCrv = model709::Crv;
     type GMustTrip = model709::MustTrip;
@@ -1030,4 +1179,104 @@ impl TripCurveModel<u32, u32> for Model710 {
     const CRV_ACT_PT: Point<Self::GMustTrip, Option<u16>> = model710::MustTrip::ACT_PT;
     const X_PT: Point<Self::GPt, Option<u32>> = model710::Pt::HZ;
     const Y_PT: Point<Self::GPt, Option<u32>> = model710::Pt::TMS;
+}
+
+/// Helper trait to avoid typos when calculating curve offsets.
+///
+/// The volt curve models (705, 706) have only a single repetiting group but
+/// with a different amount of static points inside each. It is very similar to
+/// TripCurveModel.
+trait VoltCurveModel<TX, TY>
+where
+    Self: Model,
+    TX: ScaledValueInner + FixedSize,
+    TY: ScaledValueInner + FixedSize,
+{
+    type GCrv: Group;
+    type GPt: Group;
+    const ADPT_CURV_REQ: Point<Self, u16>;
+    const N_CRV: Point<Self, u16>;
+    const N_PT: Point<Self, u16>;
+    const X_SF: Point<Self, i16>;
+    const Y_SF: Point<Self, i16>;
+    const CRV_ACT_PT: Point<Self::GCrv, u16>;
+    const X_PT: Point<Self::GPt, Option<TX>>;
+    const Y_PT: Point<Self::GPt, Option<TY>>;
+
+    fn curve_len(n_pt: u16) -> u16 {
+        Self::GCrv::LEN + Self::GPt::LEN * n_pt
+    }
+
+    /// The offset of a curve inside the list. `curve_index` follows 1-based indexing.
+    fn curve_offset(curve_index: u16, n_pt: u16) -> u16 {
+        Self::LEN + Self::curve_len(n_pt) * (curve_index - 1)
+    }
+
+    /// Write the curve to its offset location, and filling in the AdptCrvReq
+    /// register, returning true if the curve was written or not.
+    async fn write_curve(
+        device: &AsyncDevice<TokioModbusContext>,
+        curve_data: &Curve<TX, TY>,
+    ) -> Result<bool> {
+        let n_curves = device.read_point(Self::N_CRV).await.map_err(comm_err)?;
+        let n_pt = device.read_point(Self::N_PT).await.map_err(comm_err)?;
+
+        // It is a requirement that the caller is passing what they believe
+        // to be the location of curve 2. We use this as an assertion before
+        // writing to this location.
+        if n_curves < 2 {
+            return Ok(false);
+        }
+        if curve_data.len() > n_pt {
+            return Ok(false);
+        }
+
+        let x_sf = device.read_point(Self::X_SF).await.map_err(comm_err)?;
+        let y_sf = device.read_point(Self::Y_SF).await.map_err(comm_err)?;
+
+        let curve_addr = Self::addr(&device.models).addr + Self::curve_offset(2, n_pt);
+
+        // FIXME: write all of these points in one block of registers.
+
+        // Write the number of active points first.
+        write_offset_point(device, curve_addr, Self::CRV_ACT_PT, curve_data.len()).await?;
+
+        for (i, point) in curve_data.iter_scaled().enumerate() {
+            write_offset_point(
+                device,
+                curve_addr + Self::GCrv::LEN + Self::GPt::LEN * (i as u16),
+                Self::X_PT,
+                Some(point.0.rescale(x_sf).value),
+            )
+            .await?;
+            write_offset_point(
+                device,
+                curve_addr + Self::GCrv::LEN + Self::GPt::LEN * (i as u16),
+                Self::Y_PT,
+                Some(point.1.rescale(y_sf).value),
+            )
+            .await?;
+        }
+
+        device
+            .write_point(Self::ADPT_CURV_REQ, 2)
+            .await
+            .map_err(comm_err)?;
+
+        Ok(true)
+    }
+}
+
+impl VoltCurveModel<u16, i16> for Model706 {
+    type GCrv = model706::Crv;
+    type GPt = model706::Pt;
+
+    const ADPT_CURV_REQ: Point<Self, u16> = Model706::ADPT_CRV_REQ;
+    const N_CRV: Point<Self, u16> = Model706::N_CRV;
+    const N_PT: Point<Self, u16> = Model706::N_PT;
+    const X_SF: Point<Self, i16> = Model706::V_SF;
+    const Y_SF: Point<Self, i16> = Model706::DEPT_REF_SF;
+    const CRV_ACT_PT: Point<Self::GCrv, u16> = model706::Crv::ACT_PT;
+    const X_PT: Point<Self::GPt, Option<u16>> = model706::Pt::V;
+    const Y_PT: Point<Self::GPt, Option<i16>> = model706::Pt::W;
 }
