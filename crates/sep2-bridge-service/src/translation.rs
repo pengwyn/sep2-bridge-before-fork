@@ -5,10 +5,11 @@ use derive_more::Display;
 use sep2_common::packages::{
     der::{
         ActivePower, ApparentPower, ConnectStatusType, ConnectStatusValue, DERAlarmStatus,
-        DERCapability, DERControlType, DERSettings, DERStatus, FreqDroopType,
+        DERCapability, DERControlType, DERCurve, DERSettings, DERStatus, FreqDroopType,
         OperationalModeStatusType, OperationalModeStatusValue, PowerFactor, ReactivePower,
         ReactiveSusceptance, StateOfChargeStatusType, VoltageRMS,
     },
+    links::DERCurveLink,
     metering::{Reading, ReadingType},
     metering_mirror::MirrorMeterReading,
     primitives::{Int16, Int32, Int48, Int64, String32, Uint16, Uint32},
@@ -23,8 +24,8 @@ use sunspec::models::{model701, model702::CtrlModes, model703, model704};
 use crate::{
     ScaledValue,
     modbus_connection::{
-        Capabilities as ModbusCapabilities, Metering as ModbusMetering, Model711Ctl,
-        Parameters as ModbusParameters, PhaseReference, Settings as ModbusSettings,
+        Capabilities as ModbusCapabilities, Curve as ModbusCurve, Metering as ModbusMetering,
+        Model711Ctl, Parameters as ModbusParameters, PhaseReference, Settings as ModbusSettings,
         Status as ModbusStatus, VoltageWithReference,
     },
     scheduler::ControlAttributes,
@@ -297,7 +298,31 @@ impl TryFrom<ControlAttributes> for ModbusParameters {
     type Error = NamedError;
 
     fn try_from(attrs: ControlAttributes) -> Result<ModbusParameters> {
+        let get_curve_data = |link: DERCurveLink| {
+            attrs
+                .curves
+                .iter()
+                .find(|curve| curve.href.as_ref() == Some(&link.href))
+                .cloned()
+        };
+
         Ok(ModbusParameters {
+            // AS5438 - Table F.8 to E.8
+            der_trip_lf: attrs
+                .inner
+                .der_control_base
+                .op_mod_lfrt_must_trip
+                .and_then(get_curve_data)
+                .try_convert()
+                .map_err(|err| err.name("der_trip_lf"))?,
+            der_trip_hf: attrs
+                .inner
+                .der_control_base
+                .op_mod_hfrt_must_trip
+                .and_then(get_curve_data)
+                .try_convert()
+                .map_err(|err| err.name("der_trip_hf"))?,
+
             // AS5438 - Table F.9 to E.9
             droop_ctl: attrs.inner.der_control_base.op_mod_freq_droop.convert(),
 
@@ -775,6 +800,25 @@ impl Convert<i16> for PowerOfTenMultiplierType {
             PowerOfTenMultiplierType::Eight => 8,
             PowerOfTenMultiplierType::Giga => 9,
         }
+    }
+}
+
+impl<TX, TY> TryConvert<ModbusCurve<TX, TY>> for DERCurve
+where
+    Int32: TryConvert<TX>,
+    Int32: TryConvert<TY>,
+{
+    fn try_convert(self: DERCurve) -> ResultUnnamed<ModbusCurve<TX, TY>> {
+        // FIXME: We might have to consider other properties of DERCurve::x and also CurveData::excitation
+        Ok(ModbusCurve {
+            points: self
+                .curve_data
+                .iter()
+                .map(|point| Ok((point.xvalue.try_convert()?, point.yvalue.try_convert()?)))
+                .collect::<ResultUnnamed<Vec<_>>>()?,
+            sf_x: self.x_multiplier.convert(),
+            sf_y: self.y_multiplier.convert(),
+        })
     }
 }
 
