@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sep2_common::packages::der::{DERControlBase, DefaultDERControl};
+use sep2_common::packages::der::{DERControlBase, DERCurve, DefaultDERControl};
 
 use super::Event;
 
@@ -9,15 +9,21 @@ use super::Event;
 ///
 /// Wraps the DefaultDERControl struct as that encompases all possible 38
 /// parameters (29 in DERControlBase, 9 in the DefaultDERControl struct itself).
+/// along with a set of curve data which can be used to resolve CurveLinks.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct ControlAttributes {
     // These parameters come from DERControlBase, with DERCurveLink replaced with DERCurve.
     pub inner: DefaultDERControl,
+
+    pub curves: Vec<DERCurve>,
 }
 
 impl ControlAttributes {
-    pub fn new(controls: DefaultDERControl) -> ControlAttributes {
-        ControlAttributes { inner: controls }
+    pub fn new(controls: DefaultDERControl, curves: Vec<DERCurve>) -> ControlAttributes {
+        ControlAttributes {
+            inner: controls,
+            curves,
+        }
     }
 
     /// Total distinct attributes that would be applied.
@@ -224,6 +230,32 @@ pub fn overlay_controls(first: DefaultDERControl, overlay: DefaultDERControl) ->
         set_soft_grad_w: first.set_soft_grad_w.or(overlay.set_soft_grad_w),
         ..Default::default()
     }
+}
+
+/// Return the hrefs of any curves specified in the attributes of the control.
+pub fn all_curve_hrefs(control: &DERControlBase) -> Vec<String> {
+    [
+        &control.op_mod_freq_watt,
+        &control.op_mod_hfrt_may_trip,
+        &control.op_mod_hfrt_must_trip,
+        &control.op_mod_lfrt_may_trip,
+        &control.op_mod_lfrt_must_trip,
+        &control.op_mod_hvrt_may_trip,
+        &control.op_mod_hvrt_must_trip,
+        &control.op_mod_hvrt_momentary_cessation,
+        &control.op_mod_lvrt_may_trip,
+        &control.op_mod_lvrt_must_trip,
+        &control.op_mod_lvrt_momentary_cessation,
+        &control.op_mod_volt_var,
+        &control.op_mod_volt_watt,
+        &control.op_mod_watt_pf,
+        &control.op_mod_watt_var,
+    ]
+    .into_iter()
+    .flatten()
+    .cloned()
+    .map(|curve| curve.href)
+    .collect()
 }
 
 #[cfg(test)]
@@ -466,9 +498,9 @@ mod tests {
         fn test_active_attribute_count_consistency(controls1 in arb_default_der_control(), controls2 in arb_default_der_control()) {
             let merged = overlay_controls(controls1.clone(), controls2.clone());
             // Convert to a ControlAttributes struct to easily calculate the number of active controls.
-            let ca1 = ControlAttributes::new(controls1);
-            let ca2 = ControlAttributes::new(controls2);
-            let ca_merged = ControlAttributes::new(merged);
+            let ca1 = ControlAttributes::new(controls1, Vec::new());
+            let ca2 = ControlAttributes::new(controls2, Vec::new());
+            let ca_merged = ControlAttributes::new(merged, Vec::new());
             let n1 = ca1.num_active();
             let n2 = ca2.num_active();
             let n_merged = ca_merged.num_active();

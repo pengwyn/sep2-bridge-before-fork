@@ -11,12 +11,13 @@ use chrono::{DateTime, Utc};
 use sep2_bridge::{Result, scheduler, sep2_connection::Sep2ResourceEvent};
 use sep2_common::packages::{
     der::{
-        ActivePower, DERControl, DERControlBase, DERControlList, DERProgram, DERProgramList,
-        DefaultDERControl,
+        ActivePower, DERControl, DERControlBase, DERControlList, DERCurve, DERCurveList,
+        DERProgram, DERProgramList, DefaultDERControl,
     },
     edev::{EndDevice, EndDeviceList},
     fsa::{FunctionSetAssignments, FunctionSetAssignmentsList},
     identification::{Link, ListLink, ResponseRequired, ResponseStatus},
+    links::{DERCurveLink, DERCurveListLink},
     primitives::{HexBinary160, Int16, Int64, Uint16, Uint32},
     types::{DateTimeInterval, MRIDType, PowerOfTenMultiplierType, PrimacyType, SFDIType},
 };
@@ -44,7 +45,13 @@ async fn requests_polling() {
         .expect("Send failure");
 
     // Additional poll requests that will be received but we won't respond with a resource.
-    let additional_hrefs = [HREF_EDEV, HREF_FSA, HREF_DERP, HREF_DDERC];
+    let additional_hrefs = [
+        HREF_EDEV,
+        HREF_FSA,
+        HREF_DERP,
+        HREF_DDERC,
+        HREF_HFRT_MUST_TRIP_CURVE,
+    ];
 
     // Expect that each of the resources was queried.
     let mut resources_to_be_queried: HashSet<_> = resource_map
@@ -120,6 +127,12 @@ async fn emits_parameters() {
 
         set_grad_w: Some(set_grad_w),
         set_es_high_volt: Some(set_es_high_volt),
+        der_control_base: DERControlBase {
+            op_mod_hfrt_must_trip: Some(DERCurveLink {
+                href: HREF_HFRT_MUST_TRIP_CURVE.into(),
+            }),
+            ..Default::default()
+        },
         ..Default::default()
     }));
     input_ch
@@ -134,9 +147,25 @@ async fn emits_parameters() {
         .expect("Recv error");
     match event {
         scheduler::Event::ParametersChanged(parameters) => {
-            assert_eq!(parameters.num_active(), 2);
+            assert_eq!(parameters.num_active(), 3);
             assert_eq!(parameters.inner.set_grad_w, Some(set_grad_w));
             assert_eq!(parameters.inner.set_es_high_volt, Some(set_es_high_volt));
+
+            // Ensure that we have a matching curve for the provided HFRT must trip curve.
+            let href = parameters
+                .inner
+                .der_control_base
+                .op_mod_hfrt_must_trip
+                .clone()
+                .expect("Should have hfrt curve")
+                .href;
+
+            assert!(
+                parameters
+                    .curves
+                    .iter()
+                    .any(|curve| curve.href.as_ref() == Some(&href))
+            );
         }
         event => {
             panic!("Unexpected event {:?} from scheduler", event);
@@ -327,6 +356,8 @@ const HREF_DERP: &str = "/edev/1/derp/1";
 const HREF_DDERC: &str = "/edev/1/derp/1/dderc";
 const HREF_DERCL: &str = "/edev/1/derp/1/derc";
 const HREF_DERC_1: &str = "/edev/1/derp/1/derc/1";
+const HREF_CURVEL: &str = "/dc";
+const HREF_HFRT_MUST_TRIP_CURVE: &str = "/dc/1";
 
 /// Returns a resource map and the expected number of events that would be
 /// generated from applying all resources.
@@ -392,6 +423,10 @@ fn resource_map_no_controls() -> (HashMap<&'static str, Sep2ResourceEvent>, usiz
                     href: HREF_DERCL.into(),
                     ..Default::default()
                 }),
+                der_curve_list_link: Some(DERCurveListLink {
+                    href: HREF_CURVEL.into(),
+                    ..Default::default()
+                }),
 
                 mrid: MRIDType(123),
 
@@ -424,13 +459,36 @@ fn resource_map_no_controls() -> (HashMap<&'static str, Sep2ResourceEvent>, usiz
             href: Some(HREF_DDERC.into()),
 
             set_grad_w: Some(Uint16(42)),
+            der_control_base: DERControlBase {
+                op_mod_hfrt_must_trip: Some(DERCurveLink {
+                    href: HREF_HFRT_MUST_TRIP_CURVE.into(),
+                }),
+                ..Default::default()
+            },
             ..Default::default()
+        })),
+    );
+    resource_map.insert(
+        HREF_CURVEL,
+        Sep2ResourceEvent::DERCurveList(Arc::new(DERCurveList {
+            href: Some(HREF_CURVEL.into()),
+
+            der_curve: vec![DERCurve {
+                href: Some(HREF_HFRT_MUST_TRIP_CURVE.into()),
+                mrid: MRIDType(1001),
+
+                // Deliberately leaving this empty: we only need to test
+                // that the curve is emitted, not its contents.
+                ..Default::default()
+            }],
+            all: Uint32(1),
+            results: Uint32(1),
         })),
     );
 
     // Hard-coding this number: it will need adjustment if the resources above
     // are modified or added to.
-    let expected_number_of_events = 9;
+    let expected_number_of_events = 11;
 
     (resource_map, expected_number_of_events)
 }

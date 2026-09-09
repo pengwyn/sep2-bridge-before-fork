@@ -983,6 +983,7 @@ mod tests {
                 set_es_delay: Some(Uint32(42)),
                 ..Default::default()
             },
+            ..Default::default()
         };
 
         let result: Result<ModbusParameters> = parameters.try_into();
@@ -1008,6 +1009,7 @@ mod tests {
                 set_es_low_freq: Some(Uint16(4900)),
                 ..Default::default()
             },
+            ..Default::default()
         };
 
         let result: ModbusParameters = parameters.try_into().expect("Translation failed");
@@ -1031,6 +1033,7 @@ mod tests {
                 set_es_ramp_tms: Some(Uint32(12_000)),
                 ..Default::default()
             },
+            ..Default::default()
         };
 
         let result: ModbusParameters = parameters.try_into().expect("Translation failed");
@@ -1052,6 +1055,7 @@ mod tests {
                 set_es_ramp_tms: Some(Uint32(120)),
                 ..Default::default()
             },
+            ..Default::default()
         };
 
         let result: ModbusParameters = parameters.try_into().expect("Translation failed");
